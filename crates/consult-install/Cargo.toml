@@ -1,0 +1,30 @@
+[package]
+name = "consult-install"
+description = "The claude-consult installer, upgrader and uninstaller, interactive and unattended"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_install"
+path = "src/lib.rs"
+
+[dependencies]
+consult-core = { path = "../consult-core" }
+consult-service = { path = "../consult-service" }
+consult-tui = { path = "../consult-tui" }
+ratatui = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+dunce = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

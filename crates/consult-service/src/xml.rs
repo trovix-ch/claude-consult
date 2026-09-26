@@ -18,6 +18,65 @@ pub enum LogonKind {
     InteractiveToken,
 }
 
+/// Quotes one argument so `CommandLineToArgvW` (and the Rust runtime, which
+/// follows the same rules) reads it back unchanged: backslashes are literal
+/// except before a quote, where they are doubled, and the quote is escaped.
+pub fn quote_arg(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '\u{b}', '"']) {
+        return arg.to_owned();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                out.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\\', backslashes));
+                out.push(c);
+                backslashes = 0;
+            }
+        }
+    }
+    // Before the closing quote every backslash is doubled, or the last one
+    // would escape it.
+    out.extend(std::iter::repeat_n('\\', backslashes * 2));
+    out.push('"');
+    out
+}
+
+/// The command line `install_elevated` gives the elevated child:
+/// `service install --no-fallback --no-elevate --port N --install-dir D`, plus
+/// `--run-as A` when `spec.account` is set (`install_elevated` always sets it).
+///
+/// `--no-fallback` because an elevated child that quietly registered the
+/// logon-only task would report success for exactly the case it exists to
+/// fix; `--no-elevate` so it can never ask again; `--run-as` because the
+/// child's own environment names whoever answered the administrator prompt.
+pub fn elevated_arguments(spec: &ServiceSpec) -> String {
+    let dir = spec.working_dir.to_string_lossy();
+    let mut args = vec![
+        "service".to_owned(),
+        "install".to_owned(),
+        "--no-fallback".to_owned(),
+        "--no-elevate".to_owned(),
+        "--port".to_owned(),
+        spec.port.to_string(),
+        "--install-dir".to_owned(),
+        quote_arg(&dir),
+    ];
+    if let Some(account) = spec.account.as_deref() {
+        args.push("--run-as".to_owned());
+        args.push(quote_arg(account));
+    }
+    args.join(" ")
+}
+
 impl LogonKind {
     /// The `<LogonType>` value in the task XML.
     pub fn as_xml(self) -> &'static str {
@@ -28,14 +87,18 @@ impl LogonKind {
     }
 }
 
-/// The action's arguments: `serve --http --port N`, with `--host H` only when
-/// the host is not the default loopback address.
+/// The action's arguments: `serve --http --port N --detached`, with `--host H`
+/// only when the host is not the default loopback address.
+///
+/// `--detached` for both principals: an interactive task would otherwise show
+/// the server's console window for as long as it runs, and in the S4U task's
+/// session 0 there is no console to lose, so it costs nothing there.
 pub fn task_arguments(spec: &ServiceSpec) -> String {
     let host = spec.host.trim();
     if host.is_empty() || host == DEFAULT_HOST {
-        format!("serve --http --port {}", spec.port)
+        format!("serve --http --port {} --detached", spec.port)
     } else {
-        format!("serve --http --host {host} --port {}", spec.port)
+        format!("serve --http --host {host} --port {} --detached", spec.port)
     }
 }
 
@@ -161,6 +224,13 @@ impl RegisteredTask {
     /// The `--port` the action passes, if any.
     pub fn port(&self) -> Option<u16> {
         self.arguments.as_deref().and_then(port_from_arguments)
+    }
+
+    /// Whether the principal logs on with S4U, and so starts at boot.
+    pub fn is_s4u(&self) -> bool {
+        self.logon_type
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case(LogonKind::S4U.as_xml()))
     }
 
     /// Who the task runs as, preferring a readable account name over a SID.

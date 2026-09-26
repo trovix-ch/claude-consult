@@ -357,9 +357,11 @@ dependencies = [
  "consult-manage",
  "consult-mcp",
  "consult-service",
+ "consult-tui",
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -472,6 +474,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "wiremock",
 ]
 
@@ -482,6 +485,7 @@ dependencies = [
  "roxmltree",
  "sysinfo",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

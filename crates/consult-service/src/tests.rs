@@ -11,6 +11,7 @@ fn spec() -> ServiceSpec {
         working_dir: PathBuf::from(r"C:\Users\A & B\AppData\Local\claude-consult"),
         port: 8765,
         host: DEFAULT_HOST.to_owned(),
+        account: None,
     }
 }
 
@@ -50,7 +51,7 @@ fn s4u_xml_is_well_formed_and_has_every_setting() {
         "<StartWhenAvailable>true</StartWhenAvailable>",
         "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
         "<RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>3</Count>\n    </RestartOnFailure>",
-        "<Arguments>serve --http --port 8765</Arguments>",
+        "<Arguments>serve --http --port 8765 --detached</Arguments>",
         r"<Command>C:\Users\A &amp; B\AppData\Local\claude-consult\bin\claude-consult.exe</Command>",
         r"<WorkingDirectory>C:\Users\A &amp; B\AppData\Local\claude-consult</WorkingDirectory>",
     ] {
@@ -67,6 +68,8 @@ fn interactive_xml_has_only_the_logon_trigger() {
     assert!(text.contains("<LogonType>InteractiveToken</LogonType>"));
     assert!(text.contains("<RunLevel>LeastPrivilege</RunLevel>"));
     assert!(text.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+    // Detached for both principals: the interactive one would show a console.
+    assert!(text.contains("<Arguments>serve --http --port 8765 --detached</Arguments>"));
 }
 
 #[test]
@@ -87,11 +90,11 @@ fn generated_xml_round_trips_through_the_parser() {
 #[test]
 fn host_is_passed_only_when_not_loopback() {
     let mut s = spec();
-    assert_eq!(task_arguments(&s), "serve --http --port 8765");
+    assert_eq!(task_arguments(&s), "serve --http --port 8765 --detached");
     s.host = "0.0.0.0".into();
     assert_eq!(
         task_arguments(&s),
-        "serve --http --host 0.0.0.0 --port 8765"
+        "serve --http --host 0.0.0.0 --port 8765 --detached"
     );
     assert_eq!(
         task_description(&s),
@@ -161,6 +164,85 @@ fn port_parsing() {
     assert_eq!(port_from_arguments("serve --http"), None);
     assert_eq!(port_from_arguments("serve --http --port"), None);
     assert_eq!(port_from_arguments("serve --http --port 99999"), None);
+    assert_eq!(
+        port_from_arguments("serve --http --port 8765 --detached"),
+        Some(8765)
+    );
+    assert_eq!(
+        port_from_arguments("serve --http --detached --port=8766"),
+        Some(8766)
+    );
+    assert_eq!(port_from_arguments(&task_arguments(&spec())), Some(8765));
+}
+
+#[test]
+fn argument_quoting_round_trips_the_windows_rules() {
+    assert_eq!(quote_arg("plain"), "plain");
+    assert_eq!(quote_arg(r"C:\no\spaces"), r"C:\no\spaces");
+    assert_eq!(quote_arg(""), r#""""#);
+    assert_eq!(quote_arg(r"C:\with space"), r#""C:\with space""#);
+    // A trailing backslash would escape the closing quote unless doubled.
+    assert_eq!(quote_arg(r"C:\with space\"), r#""C:\with space\\""#);
+    // A quote is escaped, and backslashes right before it doubled.
+    assert_eq!(quote_arg(r#"a"b"#), r#""a\"b""#);
+    assert_eq!(quote_arg(r#"a\"b"#), r#""a\\\"b""#);
+    // Backslashes elsewhere stay single.
+    assert_eq!(quote_arg(r"a\\b c"), r#""a\\b c""#);
+}
+
+#[test]
+fn the_elevated_child_gets_no_fallback_and_no_second_prompt() {
+    assert_eq!(
+        elevated_arguments(&spec()),
+        r#"service install --no-fallback --no-elevate --port 8765 --install-dir "C:\Users\A & B\AppData\Local\claude-consult""#
+    );
+    let mut s = spec();
+    s.working_dir = PathBuf::from(r"C:\x\cc");
+    s.port = 9001;
+    assert_eq!(
+        elevated_arguments(&s),
+        r"service install --no-fallback --no-elevate --port 9001 --install-dir C:\x\cc"
+    );
+}
+
+#[test]
+fn the_elevated_child_is_told_whose_task_it_registers() {
+    let mut s = spec();
+    s.working_dir = PathBuf::from(r"C:\x\cc");
+    s.account = Some(r"EXAMPLE\some one".into());
+    assert_eq!(
+        elevated_arguments(&s),
+        r#"service install --no-fallback --no-elevate --port 8765 --install-dir C:\x\cc --run-as "EXAMPLE\some one""#
+    );
+}
+
+#[test]
+fn the_account_given_is_the_principal_and_the_logon_user() {
+    // What the elevated child writes with --run-as: that account in both places,
+    // whatever its own environment says.
+    let mut s = spec();
+    s.account = Some(r" EXAMPLE\caller ".into());
+    let account = task_account(&s).expect("account");
+    assert_eq!(account, r"EXAMPLE\caller");
+    for logon in [LogonKind::S4U, LogonKind::InteractiveToken] {
+        let task = parse_task_xml(&task_xml(&s, &account, logon)).expect("parse");
+        assert_eq!(task.user_id.as_deref(), Some(r"EXAMPLE\caller"));
+        assert_eq!(task.logon_trigger_user.as_deref(), Some(r"EXAMPLE\caller"));
+    }
+}
+
+#[test]
+fn is_elevated_answers() {
+    // Only that it answers: whether this runner is elevated is not known here.
+    let _: bool = is_elevated();
+}
+
+#[test]
+fn elevated_success_line() {
+    assert_eq!(
+        elevated_success(r"HOST\me"),
+        r"Registered 'OpenRouterMCP' as HOST\me (S4U) - starts at boot and at logon"
+    );
 }
 
 #[test]
@@ -189,6 +271,11 @@ fn serve_process_matching() {
     let dirs = vec![PathBuf::from(r"C:\Users\Me\AppData\Local\claude-consult")];
     let ours = r#""C:\Users\Me\AppData\Local\claude-consult\bin\claude-consult.exe" serve --http --port 8765"#;
     assert!(is_serve_command_line(ours, &dirs));
+    // As the task runs it now, detached.
+    assert!(is_serve_command_line(
+        r#""C:\Users\Me\AppData\Local\claude-consult\bin\claude-consult.exe" serve --http --port 8765 --detached"#,
+        &dirs
+    ));
     // Case and slash direction do not matter.
     assert!(is_serve_command_line(
         "c:/users/me/appdata/local/CLAUDE-CONSULT/bin/claude-consult.exe serve --http",
@@ -247,9 +334,9 @@ fn fallback_explanation() {
     assert!(text.contains("LOGON ONLY"));
     assert!(text.contains("  Reason: Access is denied.\n"));
     assert!(text.contains("Boot-start requires the S4U logon type, which only an elevated"));
-    assert!(text.contains("admin PowerShell:"));
+    assert!(text.contains("accept the administrator prompt:"));
     assert!(text.contains("it''s"));
-    assert!(text.trim_end().ends_with("service install"));
+    assert!(text.trim_end().ends_with("service install --elevate"));
 }
 
 #[test]

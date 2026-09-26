@@ -131,6 +131,11 @@ struct ServeArgs {
     /// The port to bind.
     #[arg(long, requires = "http", default_value_t = consult_mcp::DEFAULT_HTTP_PORT)]
     port: u16,
+    /// Run as the background service: give up the console (Windows) and log to
+    /// state/service.log in the install dir instead of stderr. The scheduled task
+    /// passes it.
+    #[arg(long, requires = "http")]
+    detached: bool,
 }
 
 #[derive(Debug, Args)]
@@ -175,6 +180,22 @@ struct ServiceArgs {
     /// The port [default: the registered task's port, else 8765].
     #[arg(long)]
     port: Option<u16>,
+    /// install: when start-at-boot is refused for want of administrator rights, ask
+    /// for them through the Windows prompt without asking here first.
+    #[arg(long, conflicts_with = "no_elevate")]
+    elevate: bool,
+    /// install: never offer the administrator prompt; keep the logon-only task.
+    #[arg(long)]
+    no_elevate: bool,
+    /// install: register for start-at-boot (S4U) or fail; never fall back to the
+    /// logon-only task. What the elevated copy runs.
+    #[arg(long)]
+    no_fallback: bool,
+    /// install: register the task for this account (DOMAIN\user) instead of the
+    /// current one. The elevated copy is given the caller's, since its own
+    /// environment names whoever answered the administrator prompt.
+    #[arg(long, value_name = "DOMAIN\\USER", hide = true)]
+    run_as: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -300,23 +321,7 @@ fn dispatch(cli: Cli) -> anyhow::Result<i32> {
         Command::Manage => manage(install_dir, claude_dir),
         Command::Hook { kind } => Ok(consult_hooks::run(kind.into(), install_dir.as_deref())),
         Command::Service(a) => service(a, install_dir.as_deref(), claude_dir.as_deref()),
-        Command::Serve(a) => {
-            let transport = if a.http {
-                consult_mcp::Transport::Http {
-                    host: a.host,
-                    port: a.port,
-                }
-            } else {
-                consult_mcp::Transport::Stdio
-            };
-            let opts = consult_mcp::ServeOptions {
-                transport,
-                install_dir,
-                claude_dir,
-            };
-            block_on(consult_mcp::serve(opts))?.context("serve")?;
-            Ok(0)
-        }
+        Command::Serve(a) => serve(a, install_dir, claude_dir),
         Command::Run(a) => run(a, install_dir, claude_dir),
         Command::Reviewers => {
             let table = block_on(consult_mcp::reviewers(
@@ -327,6 +332,43 @@ fn dispatch(cli: Cli) -> anyhow::Result<i32> {
             Ok(0)
         }
         Command::CheckCatalog { quiet } => check_catalog(quiet),
+    }
+}
+
+fn serve(
+    a: ServeArgs,
+    install_dir: Option<PathBuf>,
+    claude_dir: Option<PathBuf>,
+) -> anyhow::Result<i32> {
+    // Detaching comes before anything else is written: from here on stderr leads
+    // nowhere, so every failure below is logged and returned as an exit code, never
+    // handed back to main to print.
+    let detached = a.detached;
+    if detached {
+        // Without a log file there is nowhere left to report to; serve regardless.
+        let _ = consult_mcp::detach(&paths::install_dir(install_dir.as_deref()));
+    }
+    let transport = if a.http {
+        consult_mcp::Transport::Http {
+            host: a.host,
+            port: a.port,
+        }
+    } else {
+        consult_mcp::Transport::Stdio
+    };
+    let opts = consult_mcp::ServeOptions {
+        transport,
+        install_dir,
+        claude_dir,
+    };
+    let result = block_on(consult_mcp::serve(opts)).and_then(|r| r.context("serve"));
+    match result {
+        Ok(()) => Ok(0),
+        Err(e) if detached => {
+            tracing::error!("{e:#}");
+            Ok(1)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -468,7 +510,16 @@ fn service(
         .or_else(consult_service::registered_port)
         .unwrap_or(DEFAULT_PORT);
     match a.action {
-        ServiceAction::Install => service_install(&dir, port),
+        ServiceAction::Install => {
+            let elevation = if a.elevate {
+                Elevation::Force
+            } else if a.no_elevate || !is_interactive() {
+                Elevation::Never
+            } else {
+                Elevation::Ask
+            };
+            service_install(&dir, port, a.no_fallback, elevation, a.run_as)
+        }
         ServiceAction::Start => {
             service_start(port)?;
             Ok(0)
@@ -498,24 +549,95 @@ fn service(
     }
 }
 
-fn service_install(dir: &Path, port: u16) -> anyhow::Result<i32> {
+/// Whether `service install` may go through the administrator prompt when start-at-boot
+/// is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Elevation {
+    /// `--elevate`: without asking.
+    Force,
+    /// Interactive: ask first, default yes.
+    Ask,
+    /// `--no-elevate`, or no terminal to ask on.
+    Never,
+}
+
+fn is_interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn service_install(
+    dir: &Path,
+    port: u16,
+    no_fallback: bool,
+    elevation: Elevation,
+    run_as: Option<String>,
+) -> anyhow::Result<i32> {
     let spec = ServiceSpec {
         exe: paths::binary_path(dir),
         working_dir: dir.to_path_buf(),
         port,
         host: consult_service::DEFAULT_HOST.to_string(),
+        account: run_as,
     };
-    let account = consult_service::current_account()?;
-    match consult_service::install(&spec)? {
-        Registration::S4U => println!(
+    let account = consult_service::task_account(&spec)?;
+    let installed = || {
+        println!(
             "installed '{TASK_NAME}' as {account} (S4U) - starts at boot and at logon, port {port}"
-        ),
-        Registration::InteractiveLogonOnly { reason } => {
-            println!(
-                "{}",
-                consult_service::explain_interactive_fallback(&reason, dir)
-            );
+        );
+    };
+    if no_fallback {
+        // The elevated copy: S4U or an error, and nothing to ask.
+        consult_service::install_s4u(&spec)?;
+        installed();
+        return Ok(0);
+    }
+    let reason = match consult_service::install(&spec)? {
+        Registration::S4U => {
+            installed();
+            return Ok(0);
         }
+        Registration::InteractiveLogonOnly { reason } => reason,
+    };
+    let explain = || {
+        println!(
+            "{}",
+            consult_service::explain_interactive_fallback(&reason, dir)
+        );
+    };
+    // Already elevated and still refused: another prompt would change nothing.
+    let elevate = match elevation {
+        _ if consult_service::is_elevated() => false,
+        Elevation::Never => false,
+        Elevation::Force => true,
+        Elevation::Ask => {
+            println!("Start-at-boot was refused: {}", reason.trim());
+            consult_tui::plain::confirm(consult_service::ELEVATE_QUESTION, true)?
+        }
+    };
+    if !elevate {
+        explain();
+        return Ok(0);
+    }
+    match consult_service::install_elevated(&spec, &spec.exe) {
+        Ok(()) => {}
+        Err(consult_service::ServiceError::ElevationCancelled) => {
+            println!("The administrator prompt was cancelled; keeping the logon-only task.");
+            explain();
+            return Ok(0);
+        }
+        Err(e) => {
+            println!("{e}");
+            explain();
+            return Ok(0);
+        }
+    }
+    match consult_service::registered() {
+        Some(task) if task.is_s4u() => {
+            let who = task.runs_as().unwrap_or_else(|| account.clone());
+            println!("[ok] {}", consult_service::elevated_success(&who));
+        }
+        _ => explain(),
     }
     Ok(0)
 }
@@ -640,6 +762,82 @@ mod tests {
             })
         ));
         assert!(Cli::try_parse_from(["claude-consult", "serve"]).is_ok());
+    }
+
+    #[test]
+    fn detached_is_for_the_http_service_only() {
+        assert!(Cli::try_parse_from(["claude-consult", "serve", "--detached"]).is_err());
+        let cli = Cli::try_parse_from([
+            "claude-consult",
+            "serve",
+            "--http",
+            "--port",
+            "8765",
+            "--detached",
+        ])
+        .expect("parses");
+        assert!(matches!(
+            cli.command,
+            Command::Serve(ServeArgs {
+                http: true,
+                detached: true,
+                port: 8765,
+                ..
+            })
+        ));
+        // Exactly what the scheduled task runs.
+        let spec = ServiceSpec {
+            exe: PathBuf::from("x"),
+            working_dir: PathBuf::from("y"),
+            port: 8765,
+            host: consult_service::DEFAULT_HOST.into(),
+            account: None,
+        };
+        let task_args = consult_service::task_arguments(&spec);
+        let argv = std::iter::once("claude-consult").chain(task_args.split_whitespace());
+        assert!(matches!(
+            Cli::try_parse_from(argv)
+                .expect("the task's arguments parse")
+                .command,
+            Command::Serve(ServeArgs { detached: true, .. })
+        ));
+    }
+
+    #[test]
+    fn the_elevated_childs_arguments_parse() {
+        let spec = ServiceSpec {
+            exe: PathBuf::from("x"),
+            working_dir: PathBuf::from(r"C:\x\cc"),
+            port: 9001,
+            host: consult_service::DEFAULT_HOST.into(),
+            account: Some(r"EXAMPLE\caller".into()),
+        };
+        let args = consult_service::elevated_arguments(&spec);
+        let argv = std::iter::once("claude-consult").chain(args.split_whitespace());
+        let cli = Cli::try_parse_from(argv).expect("parses");
+        assert_eq!(cli.install_dir.as_deref(), Some(Path::new(r"C:\x\cc")));
+        let Command::Service(s) = cli.command else {
+            panic!("not service");
+        };
+        assert_eq!(s.action, ServiceAction::Install);
+        assert_eq!(s.port, Some(9001));
+        assert!(s.no_fallback && s.no_elevate && !s.elevate);
+        assert_eq!(s.run_as.as_deref(), Some(r"EXAMPLE\caller"));
+    }
+
+    #[test]
+    fn elevate_and_no_elevate_exclude_each_other() {
+        assert!(
+            Cli::try_parse_from([
+                "claude-consult",
+                "service",
+                "install",
+                "--elevate",
+                "--no-elevate"
+            ])
+            .is_err()
+        );
+        assert!(Cli::try_parse_from(["claude-consult", "service", "install", "--elevate"]).is_ok());
     }
 
     #[test]

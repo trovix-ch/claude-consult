@@ -64,6 +64,116 @@ pub(crate) fn current_account() -> Result<String, ServiceError> {
     })
 }
 
+/// Whether the process token is elevated. Any failure to ask reads as "no",
+/// which only means the caller offers the administrator prompt.
+#[allow(unsafe_code)]
+pub(crate) fn is_elevated() -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token: HANDLE = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing;
+    // `token` is a valid out-pointer.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return false;
+    }
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut returned = 0u32;
+    // SAFETY: `token` was opened above with TOKEN_QUERY; the buffer is a
+    // TOKEN_ELEVATION of exactly the size passed.
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            (&raw mut elevation).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+    };
+    // SAFETY: `token` is a handle this function owns.
+    unsafe { CloseHandle(token) };
+    ok != 0 && elevation.TokenIsElevated != 0
+}
+
+/// Runs `exe arguments` through the administrator prompt, hidden, and waits
+/// for it. See [`crate::install_elevated`].
+#[allow(unsafe_code)]
+pub(crate) fn run_elevated(exe: &std::path::Path, arguments: &str) -> Result<(), ServiceError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, INFINITE, WaitForSingleObject,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+    };
+
+    /// `SW_HIDE`: the child is a console program and gets a console of its
+    /// own; hidden, nothing flashes up while it registers the task.
+    const SW_HIDE: i32 = 0;
+
+    if !exe.is_file() {
+        return Err(ServiceError::ExeNotFound(exe.to_path_buf()));
+    }
+    let wide = |s: &OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let verb = wide(OsStr::new("runas"));
+    let file = wide(exe.as_os_str());
+    let params = wide(OsStr::new(arguments));
+
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
+        lpVerb: verb.as_ptr(),
+        lpFile: file.as_ptr(),
+        lpParameters: params.as_ptr(),
+        nShow: SW_HIDE,
+        ..Default::default()
+    };
+    // SAFETY: every pointer in `info` points into a buffer that outlives the
+    // call, each NUL-terminated; `info` is initialised with its own size.
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        // SAFETY: no other call in between that could reset it.
+        let code = unsafe { GetLastError() };
+        return Err(if code == ERROR_CANCELLED {
+            ServiceError::ElevationCancelled
+        } else {
+            ServiceError::Elevation(std::io::Error::from_raw_os_error(code as i32).to_string())
+        });
+    }
+    let process = info.hProcess;
+    if process.is_null() {
+        // No process handle means ShellExecute handed the request to
+        // something else; there is nothing to wait on or read back.
+        return Err(ServiceError::Elevation(
+            "no process handle came back from the administrator prompt".to_owned(),
+        ));
+    }
+    let mut code = 1u32;
+    // SAFETY: `process` is the handle SEE_MASK_NOCLOSEPROCESS asked for; it
+    // is waited on, read and closed exactly once, here.
+    let read = unsafe {
+        WaitForSingleObject(process, INFINITE);
+        let read = GetExitCodeProcess(process, &mut code);
+        CloseHandle(process);
+        read
+    };
+    if read == 0 {
+        return Err(ServiceError::Elevation(
+            "could not read the elevated process's exit code".to_owned(),
+        ));
+    }
+    if code != 0 {
+        return Err(ServiceError::Elevation(format!(
+            "the elevated 'service install' exited with code {code}"
+        )));
+    }
+    Ok(())
+}
+
 fn create(name: &str, xml_text: &str) -> Result<(), ServiceError> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -94,15 +204,19 @@ impl Task {
         OsStr::new(&self.name)
     }
 
-    pub(crate) fn install_impl(&self, spec: &ServiceSpec) -> Result<Registration, ServiceError> {
+    pub(crate) fn install_impl(
+        &self,
+        spec: &ServiceSpec,
+        fallback: bool,
+    ) -> Result<Registration, ServiceError> {
         if !spec.exe.is_file() {
             return Err(ServiceError::ExeNotFound(spec.exe.clone()));
         }
-        let account = current_account()?;
+        let account = crate::task_account(spec)?;
         let s4u = xml::task_xml(spec, &account, LogonKind::S4U);
         match create(&self.name, &s4u) {
             Ok(()) => Ok(Registration::S4U),
-            Err(ServiceError::Schtasks { message, .. }) => {
+            Err(ServiceError::Schtasks { message, .. }) if fallback => {
                 // Fall back to an interactive-only task so an unelevated
                 // install still succeeds; it then starts at logon rather than
                 // at boot.

@@ -27,8 +27,9 @@ mod xml;
 
 pub use process::is_serve_command_line;
 pub use xml::{
-    LogonKind, RegisteredTask, decode_output, encode_utf16le, escape, parse_csv_state,
-    parse_task_xml, port_from_arguments, task_arguments, task_description, task_xml,
+    LogonKind, RegisteredTask, decode_output, elevated_arguments, encode_utf16le, escape,
+    parse_csv_state, parse_task_xml, port_from_arguments, quote_arg, task_arguments,
+    task_description, task_xml,
 };
 
 /// The scheduled task's name. Kept from the Python version so an upgrade
@@ -52,6 +53,13 @@ pub struct ServiceSpec {
     pub port: u16,
     /// The host; passed as `--host` only when it is not [`DEFAULT_HOST`].
     pub host: String,
+    /// The account (`DOMAIN\user`) the task runs as and whose logon triggers it;
+    /// `None` is the current account ([`current_account`]).
+    ///
+    /// Set for the elevated copy: whoever answered the administrator prompt may be a
+    /// different account, and a task running as them would read their profile and
+    /// never find the key.
+    pub account: Option<String>,
 }
 
 /// How the task ended up registered.
@@ -136,6 +144,12 @@ pub enum ServiceError {
     /// Writing the temporary task definition failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// The administrator prompt was dismissed, so nothing ran elevated.
+    #[error("the administrator prompt was cancelled")]
+    ElevationCancelled,
+    /// The elevated registration could not be started, or ran and failed.
+    #[error("the elevated registration failed: {0}")]
+    Elevation(String),
 }
 
 /// A scheduled task by name. [`Task::default`] is [`TASK_NAME`].
@@ -166,7 +180,17 @@ impl Task {
     /// variant when S4U is refused.
     pub fn install(&self, spec: &ServiceSpec) -> Result<Registration, ServiceError> {
         #[cfg(windows)]
-        return self.install_impl(spec);
+        return self.install_impl(spec, true);
+        #[cfg(not(windows))]
+        Err(ServiceError::Unsupported)
+    }
+
+    /// Registers (or replaces) the task with S4U only: a refusal is an error,
+    /// never the logon-only fallback. For the elevated child, whose whole job
+    /// is the S4U registration.
+    pub fn install_s4u(&self, spec: &ServiceSpec) -> Result<(), ServiceError> {
+        #[cfg(windows)]
+        return self.install_impl(spec, false).map(|_| ());
         #[cfg(not(windows))]
         Err(ServiceError::Unsupported)
     }
@@ -261,6 +285,58 @@ pub fn install(spec: &ServiceSpec) -> Result<Registration, ServiceError> {
     Task::default().install(spec)
 }
 
+/// Registers the [`TASK_NAME`] task with S4U or fails. See [`Task::install_s4u`].
+pub fn install_s4u(spec: &ServiceSpec) -> Result<(), ServiceError> {
+    Task::default().install_s4u(spec)
+}
+
+/// Registers the [`TASK_NAME`] task with S4U from an elevated copy of `exe`:
+/// runs `exe` with [`elevated_arguments`] through the administrator prompt
+/// (UAC), hidden, and waits for it to exit.
+///
+/// The child is told to register for `spec.account`, else this process's account.
+/// Otherwise only the port and the working directory reach it; it registers
+/// `<working_dir>/bin/claude-consult.exe` on the default host; `spec.exe` is
+/// expected to be that binary. A dismissed prompt is
+/// [`ServiceError::ElevationCancelled`]; a child that exits non-zero is
+/// [`ServiceError::Elevation`] with its exit code (its own message went to a
+/// hidden console). Read the task back with [`status`] to see what it left.
+pub fn install_elevated(spec: &ServiceSpec, exe: &Path) -> Result<(), ServiceError> {
+    #[cfg(windows)]
+    {
+        // The caller's account, fixed here, before the prompt: the elevated copy's own
+        // environment is whoever answered it.
+        let spec = ServiceSpec {
+            account: Some(task_account(spec)?),
+            ..spec.clone()
+        };
+        windows::run_elevated(exe, &elevated_arguments(&spec))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (spec, exe);
+        Err(ServiceError::Unsupported)
+    }
+}
+
+/// The account the task is registered for: `spec.account` when set, else
+/// [`current_account`].
+pub fn task_account(spec: &ServiceSpec) -> Result<String, ServiceError> {
+    match spec.account.as_deref().map(str::trim) {
+        Some(a) if !a.is_empty() => Ok(a.to_owned()),
+        _ => current_account(),
+    }
+}
+
+/// Whether this process runs elevated (an administrator token with UAC's
+/// filter lifted). Always `false` off Windows, where there is no service.
+pub fn is_elevated() -> bool {
+    #[cfg(windows)]
+    return windows::is_elevated();
+    #[cfg(not(windows))]
+    false
+}
+
 /// Runs the task and waits up to 6 seconds for `port`. See [`Task::start`].
 pub fn start(port: u16) -> Result<bool, ServiceError> {
     Task::default().start(port)
@@ -281,6 +357,11 @@ pub fn uninstall() -> Result<(), ServiceError> {
 /// fine. Off Windows it reports `supported: false` plus the listening check.
 pub fn status(port: Option<u16>) -> Result<ServiceStatus, ServiceError> {
     Task::default().status(port)
+}
+
+/// The [`TASK_NAME`] task as registered, or `None` when it is not (or cannot be read).
+pub fn registered() -> Option<RegisteredTask> {
+    Task::default().registered().ok().flatten()
 }
 
 /// The port the registered task was given.
@@ -330,12 +411,22 @@ pub fn explain_interactive_fallback(reason: &str, install_dir: &Path) -> String 
         "Registered '{TASK_NAME}' as an interactive task - LOGON ONLY.\n\
          \x20 Reason: {reason}\n\
          \x20 Boot-start requires the S4U logon type, which only an elevated\n\
-         \x20 shell may register. To get start-at-boot, run this from an\n\
-         \x20 admin PowerShell:\n\
-         \x20   & '{exe}' service install",
+         \x20 process may register. To get start-at-boot, run this from\n\
+         \x20 PowerShell and accept the administrator prompt:\n\
+         \x20   & '{exe}' service install --elevate",
         reason = reason.trim()
     )
 }
+
+/// The line that reports an S4U registration made through the administrator
+/// prompt.
+pub fn elevated_success(account: &str) -> String {
+    format!("Registered '{TASK_NAME}' as {account} (S4U) - starts at boot and at logon")
+}
+
+/// The question asked before the administrator prompt.
+pub const ELEVATE_QUESTION: &str =
+    "Register the task with administrator rights so it starts at boot?";
 
 #[cfg(test)]
 mod tests;

@@ -37,6 +37,8 @@ axum = { version = "0.8", default-features = false, features = ["tokio", "http1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
 rpassword = "7.5"
+# Features are chosen per crate: each asks only for the Win32 APIs it calls.
+windows-sys = "0.61"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

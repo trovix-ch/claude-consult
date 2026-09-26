@@ -18,6 +18,7 @@ fn install_status_uninstall_round_trip() {
         working_dir: dir.clone(),
         port: 1,
         host: "127.0.0.1".into(),
+        account: None,
     };
 
     let registration = task.install(&spec).expect("install");

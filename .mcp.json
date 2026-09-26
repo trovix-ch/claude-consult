@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "rustdocs": {
+      "type": "stdio",
+      "command": "rustdoc-mcp",
+      "args": [
+        "serve"
+      ],
+      "env": {}
+    }
+  }
+}

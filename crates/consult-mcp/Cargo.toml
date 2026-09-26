@@ -1,0 +1,34 @@
+[package]
+name = "consult-mcp"
+description = "The claude-consult MCP server (stdio and stateless streamable HTTP), its progress heartbeat, and the one-shot runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_mcp"
+path = "src/lib.rs"
+
+[dependencies]
+consult-core = { path = "../consult-core" }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+tokio-util = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client"] }
+reqwest = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

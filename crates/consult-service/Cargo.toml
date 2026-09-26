@@ -1,0 +1,21 @@
+[package]
+name = "consult-service"
+description = "Management of claude-consult's shared MCP service as a Windows scheduled task"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_service"
+
+[dependencies]
+thiserror = { workspace = true }
+roxmltree = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+sysinfo = { workspace = true }
+
+[lints]
+workspace = true

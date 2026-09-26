@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use consult_core::key::{KeyCheck, check_key, clean_key};
 use consult_core::listing::fetch_listing;
 use consult_core::openrouter::Client;
-use consult_service::{Registration, ServiceError, ServiceSpec};
+use consult_service::{RegisteredTask, Registration, ServiceError, ServiceSpec};
 
 /// The shared service, as [`consult_service`] manages it.
 pub trait ServiceOps {
@@ -23,6 +23,14 @@ pub trait ServiceOps {
     fn stop(&self, dirs: &[PathBuf]) -> Result<Vec<u32>, ServiceError>;
     /// Registers (or replaces) the task.
     fn install(&self, spec: &ServiceSpec) -> Result<Registration, ServiceError>;
+    /// Whether this process is elevated, so a refused S4U registration would be
+    /// refused through the administrator prompt too.
+    fn is_elevated(&self) -> bool;
+    /// Registers the task with S4U from an elevated copy of `exe`, through the
+    /// administrator prompt, and waits for it.
+    fn install_elevated(&self, spec: &ServiceSpec, exe: &Path) -> Result<(), ServiceError>;
+    /// The task as registered now, if it is.
+    fn registered(&self) -> Option<RegisteredTask>;
     /// Runs the task and waits for the port; `true` when it listens.
     fn start(&self, port: u16) -> Result<bool, ServiceError>;
     /// Stops and deletes the task.
@@ -107,6 +115,18 @@ impl ServiceOps for RealService {
 
     fn install(&self, spec: &ServiceSpec) -> Result<Registration, ServiceError> {
         consult_service::install(spec)
+    }
+
+    fn is_elevated(&self) -> bool {
+        consult_service::is_elevated()
+    }
+
+    fn install_elevated(&self, spec: &ServiceSpec, exe: &Path) -> Result<(), ServiceError> {
+        consult_service::install_elevated(spec, exe)
+    }
+
+    fn registered(&self) -> Option<RegisteredTask> {
+        consult_service::registered()
     }
 
     fn start(&self, port: u16) -> Result<bool, ServiceError> {

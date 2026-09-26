@@ -20,7 +20,8 @@ use consult_core::settings::{
     HookKind, StatusLineMode, StatusLineOutcome, hook_command, ours_test,
 };
 use consult_service::{
-    DEFAULT_HOST, Registration, ServiceSpec, TASK_NAME, explain_interactive_fallback,
+    DEFAULT_HOST, ELEVATE_QUESTION, Registration, ServiceError, ServiceSpec, TASK_NAME,
+    elevated_success, explain_interactive_fallback,
 };
 use consult_tui::picker::format_price;
 use consult_tui::{PickerRow, StepKind, rows_from};
@@ -805,6 +806,7 @@ fn start_service(
         working_dir: install_dir.to_path_buf(),
         port: opts.port,
         host: DEFAULT_HOST.to_string(),
+        account: None,
     };
     let registration = match cx.sys.service.install(&spec) {
         Ok(r) => r,
@@ -814,15 +816,17 @@ fn start_service(
             )));
         }
     };
-    match &registration {
-        Registration::S4U => cx.ok(&format!(
-            "Registered scheduled task '{TASK_NAME}' (starts at boot and at logon, as you)"
-        )),
-        Registration::InteractiveLogonOnly { reason } => {
-            let text = explain_interactive_fallback(reason, install_dir);
-            cx.note(&text);
+    let registration = match registration {
+        Registration::S4U => {
+            cx.ok(&format!(
+                "Registered scheduled task '{TASK_NAME}' (starts at boot and at logon, as you)"
+            ));
+            Registration::S4U
         }
-    }
+        Registration::InteractiveLogonOnly { reason } => {
+            offer_elevation(cx, &spec, binary, install_dir, reason)?
+        }
+    };
     cx.ui.busy("Starting the service");
     let listening = match cx.sys.service.start(opts.port) {
         Ok(listening) => listening,
@@ -845,6 +849,68 @@ fn start_service(
         registration,
         listening,
     })
+}
+
+/// After S4U was refused and the logon-only task registered instead: offers the
+/// administrator prompt, which registers S4U from an elevated copy of the binary.
+///
+/// Not offered unattended (nobody to click it), nor when this process is already
+/// elevated (the prompt would be refused the same way). A no, a dismissed prompt or a
+/// failed elevated run keeps the logon-only task and explains it as before.
+fn offer_elevation(
+    cx: &mut Ctx<'_>,
+    spec: &ServiceSpec,
+    binary: &Path,
+    install_dir: &Path,
+    reason: String,
+) -> Result<Registration, Halt> {
+    let explanation = explain_interactive_fallback(&reason, install_dir);
+    let logon_only = Registration::InteractiveLogonOnly {
+        reason: reason.clone(),
+    };
+    if cx.unattended || cx.sys.service.is_elevated() {
+        cx.note(&explanation);
+        return Ok(logon_only);
+    }
+    cx.note(&format!(
+        "Start-at-boot was refused: {}. Registering it needs administrator rights.",
+        reason.trim().trim_end_matches('.')
+    ));
+    if !cx.confirm(ELEVATE_QUESTION, true)? {
+        cx.note(&explanation);
+        return Ok(logon_only);
+    }
+    cx.ui.busy("Waiting for the administrator prompt");
+    match cx.sys.service.install_elevated(spec, binary) {
+        Ok(()) => {}
+        Err(ServiceError::ElevationCancelled) => {
+            cx.note("The administrator prompt was cancelled; keeping the logon-only task.");
+            cx.note(&explanation);
+            return Ok(logon_only);
+        }
+        Err(e) => {
+            cx.note(&format!(
+                "Registering with administrator rights failed: {e}"
+            ));
+            cx.note(&explanation);
+            return Ok(logon_only);
+        }
+    }
+    // What counts is what is registered now, not what the elevated run said.
+    match cx.sys.service.registered() {
+        Some(task) if task.is_s4u() => {
+            let account = task
+                .runs_as()
+                .or_else(|| consult_service::current_account().ok())
+                .unwrap_or_else(|| "you".to_string());
+            cx.ok(&elevated_success(&account));
+            Ok(Registration::S4U)
+        }
+        _ => {
+            cx.note(&explanation);
+            Ok(logon_only)
+        }
+    }
 }
 
 /// The `claude mcp add` arguments for this transport.

@@ -702,7 +702,7 @@ fn service_lines(app: &App, theme: &Theme) -> Vec<(Style, String)> {
         {
             out.push((theme.text, String::new()));
             for l in wrap(
-                "The task is registered for interactive logon only: it starts at logon, not at boot. Boot-start needs the S4U logon type, which only an elevated shell may register: run Re-register from a manage started in an admin terminal, or claude-consult service install there.",
+                "The task is registered for interactive logon only: it starts at logon, not at boot. Boot-start needs the S4U logon type, which only an elevated process may register: Re-register offers the administrator prompt, as does claude-consult service install --elevate.",
                 80,
             ) {
                 out.push((theme.note, l));

@@ -33,6 +33,7 @@ const SECRET: &str = "sk-or-v1-TOPSECRETPART0123456789";
 struct Fake {
     state_dir: PathBuf,
     supported: bool,
+    needs_elevation: bool,
     slow: bool,
     key_check: KeyCheck,
     statuses: AtomicUsize,
@@ -48,6 +49,7 @@ impl Fake {
         Self {
             state_dir,
             supported: true,
+            needs_elevation: false,
             slow: false,
             key_check: KeyCheck::Valid {
                 usage: Some(1.5),
@@ -142,6 +144,10 @@ impl Backend for Fake {
 
     fn service_supported(&self) -> bool {
         self.supported
+    }
+
+    fn needs_elevation(&self) -> bool {
+        self.needs_elevation
     }
 
     fn service_action(&self, action: ServiceAction, log: Sink<'_>) -> Result<String, String> {
@@ -457,6 +463,50 @@ fn service_actions_need_a_yes() {
             .entries()
             .iter()
             .any(|(_, t)| t == "Restart done")
+    );
+}
+
+#[test]
+fn reregister_offers_the_administrator_prompt_when_not_elevated() {
+    let open_register = || [Key::Char('7'), Key::Down, Key::Down, Key::Down, Key::Enter];
+
+    // Not elevated: after the yes, a second question, default yes.
+    let (_t, fake, mut app) = setup(|f| f.needs_elevation = true);
+    keys(&mut app, open_register());
+    let q = app.ask().expect("confirm").confirm.question().to_string();
+    assert!(q.starts_with("Re-register task:"), "{q}");
+    keys(&mut app, [Key::Char('y')]);
+    let q = app.ask().expect("elevate").confirm.question().to_string();
+    assert!(
+        q.starts_with("Register the task with administrator rights so it starts at boot?"),
+        "{q}"
+    );
+    keys(&mut app, [Key::Enter]);
+    app.settle();
+    assert_eq!(
+        *fake.services.lock().expect("lock"),
+        [ServiceAction::RegisterElevated]
+    );
+
+    // A no there keeps the plain registration.
+    let (_t, fake, mut app) = setup(|f| f.needs_elevation = true);
+    keys(&mut app, open_register());
+    keys(&mut app, [Key::Char('y'), Key::Char('n')]);
+    app.settle();
+    assert_eq!(
+        *fake.services.lock().expect("lock"),
+        [ServiceAction::Register]
+    );
+
+    // Already elevated: no second question.
+    let (_t, fake, mut app) = setup(|_| {});
+    keys(&mut app, open_register());
+    keys(&mut app, [Key::Char('y')]);
+    assert!(app.ask().is_none());
+    app.settle();
+    assert_eq!(
+        *fake.services.lock().expect("lock"),
+        [ServiceAction::Register]
     );
 }
 

@@ -171,6 +171,9 @@ pub enum ServiceAction {
     Restart,
     /// Register (or replace) the task for this install, then start it.
     Register,
+    /// [`ServiceAction::Register`] through the administrator prompt, so the task starts
+    /// at boot. Not a menu entry: a yes to the question after Register leads here.
+    RegisterElevated,
     /// Stop and delete the task.
     Unregister,
 }
@@ -192,6 +195,7 @@ impl ServiceAction {
             Self::Stop => "Stop",
             Self::Restart => "Restart",
             Self::Register => "Re-register task",
+            Self::RegisterElevated => "Re-register task (administrator)",
             Self::Unregister => "Uninstall task",
         }
     }
@@ -203,6 +207,9 @@ impl ServiceAction {
             Self::Stop => "end the task and this install's server processes",
             Self::Restart => "stop, then start: sessions reach the current binary",
             Self::Register => "register the task again for this install, then start it",
+            Self::RegisterElevated => {
+                "register it with administrator rights so it starts at boot, then start it"
+            }
             Self::Unregister => "stop and delete the task (Claude Code loses the server)",
         }
     }
@@ -234,6 +241,9 @@ pub trait Backend: Send + Sync {
     fn reinstall(&self, request: &Reinstall, log: Sink<'_>) -> Result<String, String>;
     /// Whether this platform has the shared service.
     fn service_supported(&self) -> bool;
+    /// Whether registering the task for start-at-boot needs the administrator prompt
+    /// (Windows, not elevated), so Re-register should offer it.
+    fn needs_elevation(&self) -> bool;
     /// A service action; the headline on success, the reason on failure.
     fn service_action(&self, action: ServiceAction, log: Sink<'_>) -> Result<String, String>;
     /// The catalog check.

@@ -128,11 +128,12 @@ The install dir is `%LOCALAPPDATA%\claude-consult` on Windows and
 `$XDG_DATA_HOME/claude-consult` (by default `~/.local/share/claude-consult`) elsewhere.
 The Claude dir is `--claude-dir`, else `$CLAUDE_CONFIG_DIR`, else `~/.claude`. Per-session
 consult totals go in `state/` in the install dir, and any file of yours an install
-displaced goes in `backup/<timestamp>/` there.
+displaced goes in `backup/<timestamp>/` there. The service logs to `state/service.log`
+(see [One shared service](#one-shared-service)).
 
 **Transport.** On Windows the default is one shared service for every session: a
-scheduled task running `"<install dir>/bin/claude-consult.exe" serve --http --port 8765`,
-registered with `claude mcp add --transport http --scope user openrouter
+scheduled task running `"<install dir>/bin/claude-consult.exe" serve --http --port 8765
+--detached`, registered with `claude mcp add --transport http --scope user openrouter
 http://127.0.0.1:8765/mcp`. Everywhere else, and on Windows with `--transport stdio`, Claude
 Code starts the server itself for each session: `claude mcp add --transport stdio --scope
 user openrouter -- "<install dir>/bin/claude-consult" serve`. Switching a Windows install
@@ -201,10 +202,14 @@ With a `--claude-dir` that isn't Claude Code's real config dir, the installer ne
 `claude mcp`, because that command always edits the real config. A service install into
 such a Claude dir warns first, since the service would not find the key there.
 
-**Start at boot** (Windows) needs the task registered from an **elevated** shell.
-Unelevated, the task starts at logon instead, and the installer says so and prints the
-command to run from an admin PowerShell:
-`& '<install dir>\bin\claude-consult.exe' service install`.
+**Start at boot** (Windows) needs the task registered with the S4U logon type, which
+only an **elevated** process may do. Run from an admin shell, the installer registers it
+directly. Run unelevated, it first registers a task that starts at logon only, then asks
+`Register the task with administrator rights so it starts at boot? [Y/n]`; yes brings up
+the Windows administrator prompt, and a hidden elevated copy of the installed binary
+re-registers the task for boot. A no, a dismissed prompt, or `--unattended` keeps the
+logon-only task, and the installer says so and prints the command that fixes it later:
+`& '<install dir>\bin\claude-consult.exe' service install --elevate`.
 
 ### Upgrading
 
@@ -655,6 +660,21 @@ claude-consult service stop | start | install | uninstall
 
 `service` takes the registered task's port unless you pass `--port`. On Linux and macOS
 there is no service; `service status` says so and reports whether the port is listening.
+
+`service install` tries start-at-boot (S4U) first. Refused for want of administrator
+rights, it registers the logon-only task and, in a terminal, offers the administrator
+prompt as the installer does. `--elevate` goes to the prompt without asking,
+`--no-elevate` never offers it, and `--no-fallback` (what the elevated copy runs) fails
+instead of registering the logon-only task. The manage TUI's *Re-register task* asks the
+same question after its confirmation.
+
+**No console, a log file instead.** The task passes `--detached`: the server gives up the
+console Task Scheduler opened for it, so no window stays on screen (one may flash for an
+instant as it starts), and it logs to `state/service.log` in the install dir rather than
+to stderr. Past 2 MB the log moves to `service.log.1`, replacing the one before, so a
+crash's lines survive the restart that follows. It records warnings and errors, plus one
+line when the service starts; `RUST_LOG` overrides that. Without `--detached`,
+`serve --http` logs to stderr as before, for runs by hand.
 
 ### The install dir
 

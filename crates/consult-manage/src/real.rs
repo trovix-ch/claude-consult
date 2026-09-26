@@ -19,8 +19,8 @@ use consult_install::{
     uninstall_with,
 };
 use consult_service::{
-    DEFAULT_HOST, DEFAULT_PORT, Registration, ServiceSpec, ServiceStatus, Task,
-    explain_interactive_fallback,
+    DEFAULT_HOST, DEFAULT_PORT, ELEVATE_QUESTION, Registration, ServiceError, ServiceSpec,
+    ServiceStatus, Task, elevated_success, explain_interactive_fallback,
 };
 use consult_tui::StepKind;
 use indexmap::IndexMap;
@@ -227,6 +227,10 @@ impl Backend for RealBackend {
         cfg!(windows)
     }
 
+    fn needs_elevation(&self) -> bool {
+        cfg!(windows) && !consult_service::is_elevated()
+    }
+
     fn service_action(&self, action: ServiceAction, log: Sink<'_>) -> Result<String, String> {
         let port = self.port();
         let dirs = std::slice::from_ref(&self.install_dir);
@@ -260,13 +264,41 @@ impl Backend for RealBackend {
                 std::thread::sleep(Duration::from_millis(500));
                 start(log)
             }
-            ServiceAction::Register => {
+            ServiceAction::Register | ServiceAction::RegisterElevated => {
                 let spec = ServiceSpec {
                     exe: binary_path(&self.install_dir),
                     working_dir: self.install_dir.clone(),
                     port,
                     host: DEFAULT_HOST.to_string(),
+                    account: None,
                 };
+                if action == ServiceAction::RegisterElevated {
+                    log(StepKind::Info, "Waiting for the administrator prompt ...");
+                    match consult_service::install_elevated(&spec, &spec.exe) {
+                        Ok(()) => match consult_service::registered() {
+                            Some(task) if task.is_s4u() => {
+                                let account = task
+                                    .runs_as()
+                                    .or_else(|| consult_service::current_account().ok())
+                                    .unwrap_or_else(|| "you".to_string());
+                                log(StepKind::Ok, &elevated_success(&account));
+                                return start(log);
+                            }
+                            _ => log(
+                                StepKind::Note,
+                                "The elevated run finished, but the task is not registered for boot; registering it for logon instead.",
+                            ),
+                        },
+                        Err(ServiceError::ElevationCancelled) => log(
+                            StepKind::Note,
+                            "The administrator prompt was cancelled; registering the task for logon only.",
+                        ),
+                        Err(e) => log(
+                            StepKind::Note,
+                            &format!("{e}; registering the task for logon only."),
+                        ),
+                    }
+                }
                 match consult_service::install(&spec) {
                     Ok(Registration::S4U) => log(
                         StepKind::Ok,
@@ -360,6 +392,11 @@ pub fn answer(question: &str, rotating_key: bool, allow_unusual_key: bool) -> bo
     if question.starts_with("Save it without checking?") {
         // Never reached with skip_key_check; checking was the key screen's business.
         return true;
+    }
+    if question == ELEVATE_QUESTION {
+        // A panel or key change must not raise an administrator prompt nobody asked
+        // for; the service screen's Re-register is where that is offered.
+        return false;
     }
     // "Proceed?", "Continue?", "Continue anyway?" (the install already runs this way),
     // "Keep this panel anyway?" (the picker showed the same-lab warning).
@@ -461,6 +498,8 @@ mod tests {
         assert!(answer("Use it anyway?", true, true));
         assert!(answer("Proceed?", true, false));
         assert!(answer("Keep this panel anyway?", false, false));
+        assert!(!answer(ELEVATE_QUESTION, false, false));
+        assert!(!answer(ELEVATE_QUESTION, true, true));
     }
 
     #[test]

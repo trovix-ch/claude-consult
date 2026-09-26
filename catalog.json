@@ -1,0 +1,144 @@
+{
+  "_comment": "The curated favourites: what OpenRouter's listing cannot say about a model. The installer shows them first, in this order, ahead of every other tool-capable model in the live listing. Context sizes and prices are deliberately not kept here: they drift within hours, so the installer and the server read them live. Every id below was listed and tool-capable in the public listing at https://openrouter.ai/api/v1/models on 2026-09-25; re-check with: claude-consult check-catalog. Benchmark figures in pitches and notes are as reported by the sources in _sources, not re-measured here; 'vendor-reported' marks numbers run on the vendor's own scaffolding. Diversity of training lineage is the point of a panel: three labs, so agreement means more than one lab agreeing with itself. A second model from a lab already on the panel buys much less than its benchmark delta suggests. Every model here supports tool calling, which grounded review requires.",
+
+  "_sources": [
+    "https://fireworks.ai/blog/DeepSeekV4Pro-Fable5",
+    "https://apidog.com/blog/glm-5-2-benchmarks/",
+    "https://www.datacamp.com/blog/glm-5-3-flash",
+    "https://flowtivity.ai/blog/deepseek-v4-1-flash-benchmarks/",
+    "https://artificialanalysis.ai/articles/gpt-6-sol-and-luna-push-the-cost-efficiency-frontier",
+    "https://www.vellum.ai/blog/gpt-6-sol-and-luna-benchmarks-explained",
+    "https://www.mindstudio.ai/blog/minimax-m3-coding-model-1m-context-swebench",
+    "https://medium.com/@leucopsis/gemini-3-1-pro-review-1403a8aa1a96",
+    "https://www.nxcode.io/resources/news/kimi-k3-benchmarks-coding-agent-evaluation-guide-2026",
+    "https://artificialanalysis.ai/articles/benchmarking-grok-4-7",
+    "https://www.mindstudio.ai/blog/qwen-3-8-max-benchmarks-features"
+  ],
+
+  "default_panel": ["deepseek-v4-pro", "glm-5.2", "gpt-6-luna-pro"],
+  "budget_panel": ["glm-5.3-flash", "deepseek-v4.1-flash", "minimax-m3"],
+
+  "models": {
+    "deepseek-v4-pro": {
+      "id": "deepseek/deepseek-v4-pro",
+      "display": "DeepSeek V4 Pro",
+      "lab": "DeepSeek",
+      "tier": "panel",
+      "command": "deepseek",
+      "tagline": "the correctness specialist",
+      "plays_to": "precise correctness: algorithms, edge cases, concurrency",
+      "pitch": "Best on precise correctness — algorithms, edge cases, concurrency, tricky logic (SWE-bench Verified 80.6, reported for the V4-Pro-Max configuration). Weaker than long-horizon models on whole-subsystem questions; send those to a model that plays to breadth.",
+      "note": "1.6T MoE. SWE-bench Verified 80.6 reported (V4-Pro-Max config). Its low cached-input price is what keeps agentic loops cheap."
+    },
+    "glm-5.2": {
+      "id": "z-ai/glm-5.2",
+      "display": "GLM 5.2",
+      "lab": "Z.ai",
+      "tier": "panel",
+      "command": "glm",
+      "tagline": "best across whole subsystems",
+      "plays_to": "whole subsystems, multi-file work, long-horizon coherence",
+      "pitch": "Best when the question spans a whole subsystem rather than one hard function: multi-file changes, architecture that has to hold across a codebase, migrations, long agent loops (SWE-bench Pro 62.1, Terminal-Bench 2.1 81.0, reported). Since it is being used for breadth, say in the question which parts of the system are in scope and which deliberately are not, and attach the files that anchor the subsystem — it will find the rest itself.",
+      "note": "753B MoE. SWE-bench Pro 62.1, Terminal-Bench 2.1 81.0 reported."
+    },
+    "gpt-6-luna-pro": {
+      "id": "openai/gpt-6-luna-pro",
+      "display": "GPT-6 Luna Pro",
+      "lab": "OpenAI",
+      "tier": "panel",
+      "command": "luna",
+      "tagline": "the outside lineage",
+      "plays_to": "agentic investigation; the only non-Chinese lineage at its price",
+      "pitch": "Two reasons to pick it. It is built for agentic investigation (DeepSWE v1.1 66.6 at max effort, reported), so send it when the answer is not in any single file — and be sparing with attachments, since it is the model most worth letting loose to find things itself. And it is the only non-Chinese lineage in the catalog at its price, so it supplies a genuinely different prior rather than a second opinion from a similar tradition. Caveat: its predecessor GPT-5.6 Luna degraded on very large single contexts (MRCR 41.3% at 512K-1M); not yet re-measured for GPT-6.",
+      "note": "Released 2026-09-22; successor to gpt-5.6-luna-pro at a much lower price. Reported level with GPT-5.6 on Artificial Analysis' coding-agent index. Not yet measured in this harness."
+    },
+    "glm-5.3-flash": {
+      "id": "z-ai/glm-5.3-flash",
+      "display": "GLM 5.3 Flash",
+      "lab": "Z.ai",
+      "tier": "budget",
+      "command": "glm-flash",
+      "tagline": "the cheapest capable long-horizon reviewer",
+      "plays_to": "long agent loops at a fraction of the price",
+      "pitch": "Z.ai's fast tier, priced far below GLM 5.2 while reporting higher agentic scores (Terminal-Bench 2.1 84.3, DeepSWE v1.1 63.4). Good for routine checks where cost matters more than depth. Not yet measured in this harness; a small model can investigate more shallowly than its benchmarks suggest, so check that its review actually cites the code.",
+      "note": "Released 2026-08-26. Terminal-Bench 2.1 84.3, DeepSWE v1.1 63.4 reported. Best capability per dollar in the 2026-09-25 survey; unmeasured here."
+    },
+    "deepseek-v4.1-flash": {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "display": "DeepSeek V4.1 Flash",
+      "lab": "DeepSeek",
+      "tier": "budget",
+      "command": "deepseek-flash",
+      "tagline": "cheap correctness checks",
+      "plays_to": "correctness checks on a budget",
+      "pitch": "DeepSeek's sparse fast tier (DeepSWE v1.1 74.2, reported). A budget stand-in for DeepSeek V4 Pro on correctness questions, and cached input costs almost nothing, which suits the resend-everything shape of an agentic review. Not yet measured in this harness.",
+      "note": "Released 2026-09-10, sparse MoE. DeepSWE v1.1 74.2 reported. Cached input costs almost nothing."
+    },
+    "minimax-m3": {
+      "id": "minimax/minimax-m3",
+      "display": "MiniMax M3",
+      "lab": "MiniMax",
+      "tier": "budget",
+      "command": "minimax",
+      "tagline": "a third lineage on a budget",
+      "plays_to": "long-context review from a third lab",
+      "pitch": "A third lab at budget prices (SWE-bench Pro 59.0, Terminal-Bench 2.1 66.0 — both vendor-reported on MiniMax's own scaffolding, independent verification pending). Useful mainly for lineage diversity on a cheap panel.",
+      "note": "SWE-bench Pro 59.0, Terminal-Bench 2.1 66.0, vendor-reported."
+    },
+    "grok-4.7": {
+      "id": "x-ai/grok-4.7",
+      "display": "Grok 4.7",
+      "lab": "xAI",
+      "tier": "alternate",
+      "command": "grok",
+      "tagline": "the xAI lineage",
+      "plays_to": "a US lineage outside OpenAI",
+      "pitch": "xAI's current flagship (DeepSWE v1.1 71.0 at high effort, reported), and a US lineage other than OpenAI. A smaller context than the others, which rarely matters for a review.",
+      "note": "Released 2026-09-21; supersedes grok-4.5 and the now-deprecated grok-4.20. DeepSWE v1.1 71.0 reported."
+    },
+    "qwen3.8-max": {
+      "id": "qwen/qwen3.8-max-0902",
+      "display": "Qwen3.8 Max",
+      "lab": "Alibaba",
+      "tier": "alternate",
+      "command": "qwen",
+      "tagline": "the Alibaba lineage",
+      "plays_to": "terminal-driven agentic work from Alibaba's lineage",
+      "pitch": "Alibaba's flagship (SWE-bench Pro 67.7, reported) — a distinct lineage, strong on terminal-driven agentic tasks, reportedly weaker on the hardest software-engineering evals.",
+      "note": "Snapshot 2026-09-03, 2.4T MoE. SWE-bench Pro 67.7 reported."
+    },
+    "gemini-3.1-pro": {
+      "id": "google/gemini-3.1-pro-preview",
+      "display": "Gemini 3.1 Pro",
+      "lab": "Google",
+      "tier": "premium",
+      "command": "gemini",
+      "tagline": "Google's frontier reasoning model",
+      "plays_to": "frontier reasoning from Google's lineage",
+      "pitch": "Google's frontier reasoning model (SWE-bench Verified 80.6, reported). Premium-priced: worth it on a plan that is expensive to get wrong, and cheap in clean room where there is no tool loop.",
+      "note": "SWE-bench Verified 80.6 reported. Preview id."
+    },
+    "kimi-k3": {
+      "id": "moonshotai/kimi-k3",
+      "display": "Kimi K3",
+      "lab": "Moonshot AI",
+      "tier": "premium",
+      "command": "kimi",
+      "tagline": "heavy reasoner, best value in clean room",
+      "plays_to": "deep architectural reasoning",
+      "pitch": "A heavy reasoner (Terminal-Bench 2.1 88.3, reported). Expensive on a grounded review but much cheaper in clean room, because its cost came from accumulated tool-result input and clean room has none. Its reasoning eats the token budget, so expect continuations.",
+      "note": "Dropped from the grounded panel 2026-08-02: it cost more per review than DeepSeek for no measured advantage. Much cheaper per clean-room answer (measured)."
+    },
+    "gpt-6-sol": {
+      "id": "openai/gpt-6-sol",
+      "display": "GPT-6 Sol",
+      "lab": "OpenAI",
+      "tier": "premium",
+      "command": "sol",
+      "tagline": "OpenAI's flagship",
+      "plays_to": "OpenAI's strongest reasoning, for costly decisions",
+      "pitch": "OpenAI's flagship (Terminal-Bench 2.1 83.15, reported). Same per-token price as GPT-5.6 Sol with higher reported scores. Reach for it when the decision is expensive to get wrong.",
+      "note": "Released 2026-09-22; supersedes gpt-5.6-sol and gpt-5.6-terra. Terminal-Bench 2.1 83.15 reported."
+    }
+  }
+}

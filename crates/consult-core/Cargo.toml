@@ -1,0 +1,35 @@
+[package]
+name = "consult-core"
+description = "Shared core of claude-consult: reviewer panel, sandbox, OpenRouter client, catalog, settings and install file plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_core"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+# preserve_order: settings.json is the user's file, and a merge must not reorder its keys.
+serde_json = { workspace = true, features = ["preserve_order"] }
+indexmap = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+# ring, not aws-lc: aws-lc-sys needs a C compiler and CMake at build time, which
+# `cargo install` users on Windows do not reliably have.
+rustls = { workspace = true }
+chrono = { workspace = true }
+dunce = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

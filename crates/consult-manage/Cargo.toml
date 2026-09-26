@@ -1,0 +1,32 @@
+[package]
+name = "consult-manage"
+description = "The claude-consult management TUI: status, panel, key, display, sessions, catalog, service, uninstall"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_manage"
+path = "src/lib.rs"
+
+[dependencies]
+consult-core = { path = "../consult-core" }
+consult-install = { path = "../consult-install" }
+consult-service = { path = "../consult-service" }
+consult-tui = { path = "../consult-tui" }
+# crossterm is reached as ratatui::crossterm: a separate dependency could resolve to
+# another version and bring a second, incompatible event type.
+ratatui = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

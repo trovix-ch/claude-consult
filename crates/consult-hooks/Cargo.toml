@@ -1,0 +1,23 @@
+[package]
+name = "consult-hooks"
+description = "Claude Code hooks of claude-consult: the consult summary, its display under the reply, and the session status line"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "consult_hooks"
+path = "src/lib.rs"
+
+[dependencies]
+consult-core = { path = "../consult-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

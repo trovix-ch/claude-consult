@@ -1,0 +1,44 @@
+[package]
+name = "claude-consult"
+description = "Ask models from other labs, through OpenRouter, for an outside opinion from inside Claude Code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+keywords = ["claude", "mcp", "openrouter", "review", "llm"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "claude-consult"
+path = "src/main.rs"
+
+[dependencies]
+consult-core = { path = "../consult-core" }
+consult-hooks = { path = "../consult-hooks" }
+consult-install = { path = "../consult-install" }
+consult-manage = { path = "../consult-manage" }
+consult-mcp = { path = "../consult-mcp" }
+consult-service = { path = "../consult-service" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+# cargo-binstall: the archives .github/workflows/release.yml attaches to each release,
+# `claude-consult-v<version>-<target>.<zip|tar.gz>`, each holding one top-level folder of
+# the same name with the binary inside.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/claude-consult-v{ version }-{ target }{ archive-suffix }"
+bin-dir = "claude-consult-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[lints]
+workspace = true

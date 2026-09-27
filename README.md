@@ -35,6 +35,10 @@ No Rust toolchain? Download the binary for your platform from
 [Releases](https://github.com/trovix-ch/claude-consult/releases) and run
 `claude-consult install` from there.
 
+**Windows:** if the build fails with `os error 4551`, Smart App Control or an IT policy
+blocked it (see Windows Security → App & browser control). The prebuilt binary isn't
+signed yet, so it may be blocked too.
+
 `install` checks your key with OpenRouter and shows what it is about to do before it writes
 anything. It adds the slash commands, registers the MCP server with Claude Code, and adds a
 few hooks and a status line to your Claude Code settings.

@@ -117,7 +117,8 @@ Script code:
 - sums `cost_usd` for the spend.
 
 The progress line and the summary drawn on screen are display only and never part of the
-result; their styles are install options described in the project README.
+result; their styles are set with `claude-consult manage` or `claude-consult install
+--progress-style/--summary-style`.
 
 ## Asking for a verdict — only when the script counts it
 

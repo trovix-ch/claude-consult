@@ -78,7 +78,7 @@ impl Screen {
     }
 }
 
-/// What each progress style shows, as the README's table says.
+/// What each progress style shows, for the Display screen.
 pub const PROGRESS_HELP: [(ProgressStyle, &str); 7] = [
     (
         ProgressStyle::Full,
@@ -107,7 +107,7 @@ pub const PROGRESS_HELP: [(ProgressStyle, &str); 7] = [
     (ProgressStyle::Quiet, "only who was asked"),
 ];
 
-/// What each summary style shows, as the README's table says.
+/// What each summary style shows, for the Display screen.
 pub const SUMMARY_HELP: [(SummaryStyle, &str); 4] = [
     (SummaryStyle::Dim, "dimmed, coloured marks"),
     (SummaryStyle::Italic, "markdown italics, no colour"),

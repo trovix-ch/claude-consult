@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/trovix-oss/claude-consult"
+repository = "https://github.com/trovix-ch/claude-consult"
 rust-version = "1.88"
 
 [workspace.dependencies]

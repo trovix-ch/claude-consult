@@ -1576,7 +1576,7 @@ async fn post_chat_retries_a_500_then_succeeds_with_our_headers() {
     );
     assert_eq!(
         h.get("http-referer").and_then(|v| v.to_str().ok()),
-        Some("https://github.com/trovix-oss/claude-consult")
+        Some("https://github.com/trovix-ch/claude-consult")
     );
     assert_eq!(
         h.get("x-title").and_then(|v| v.to_str().ok()),

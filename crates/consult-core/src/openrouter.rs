@@ -18,7 +18,7 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 /// Attempts per chat request before giving up.
 pub const ATTEMPTS: u32 = 4;
 /// Sent as `HTTP-Referer`, which OpenRouter shows as the app.
-pub const REFERER: &str = "https://github.com/trovix-oss/claude-consult";
+pub const REFERER: &str = "https://github.com/trovix-ch/claude-consult";
 /// Sent as `X-Title`.
 pub const TITLE: &str = "claude-consult";
 

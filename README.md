@@ -15,25 +15,29 @@ they agree, it means something.
 
 One Rust binary, for Windows, Linux and macOS.
 
-## Install
+## Quickstart
 
-You need [Claude Code](https://claude.com/claude-code) with `claude` on your `PATH`, and an
+You need [Claude Code](https://claude.com/claude-code), [Rust](https://rustup.rs) and an
 [OpenRouter API key](https://openrouter.ai/settings/keys) with credits. Give the key a
 **credit limit**: it is the only hard cap on what a runaway review can spend.
 
 ```sh
-cargo install --locked --git https://github.com/trovix-oss/claude-consult claude-consult
+cargo install --locked --git https://github.com/trovix-ch/claude-consult claude-consult
 claude-consult install
 ```
 
+Paste your key when asked, press Enter to take the recommended panel, and confirm. Then
+restart Claude Code and try `/consult` on a plan you're unsure about.
+
+## Install
+
 No Rust toolchain? Download the binary for your platform from
-[Releases](https://github.com/trovix-oss/claude-consult/releases) and run
+[Releases](https://github.com/trovix-ch/claude-consult/releases) and run
 `claude-consult install` from there.
 
-`install` asks for your key and checks it with OpenRouter, lets you pick your panel, shows
-what it is about to do and waits for you to confirm. It adds the slash commands, registers
-the MCP server with Claude Code, and adds a few hooks and a status line to your Claude Code
-settings. Restart any open Claude Code sessions afterwards.
+`install` checks your key with OpenRouter and shows what it is about to do before it writes
+anything. It adds the slash commands, registers the MCP server with Claude Code, and adds a
+few hooks and a status line to your Claude Code settings.
 
 To upgrade, get the new binary and run `claude-consult install` again. To remove everything,
 run `claude-consult uninstall`. `claude-consult install --help` lists the options.

@@ -937,34 +937,39 @@ fn the_logon_only_fallback_is_explained() {
     assert!(out.contains("service install --elevate"), "{out}");
 }
 
-/// An interactive install where S4U is refused, answering the elevation question
-/// with `elevate`; the outcome and the scripted UI.
-fn logon_only_interactive(uac: Uac, elevate: Option<bool>) -> (Rig, InstallOutcome, Script) {
+/// An interactive install where S4U is refused; the outcome and the scripted UI. It
+/// asks only the key and Proceed?: the administrator prompt follows without a
+/// question. The running binary is a different file from the one copied to bin/.
+fn logon_only_interactive(uac: Uac, no_elevate: bool) -> (Rig, InstallOutcome, Script) {
     let mut rig = Rig::new();
     rig.registration = Registration::InteractiveLogonOnly {
         reason: "ERROR: Access is denied.".into(),
     };
     rig.uac = uac;
-    let mut answers = vec![A::Yes /* the env key */, A::Yes /* Proceed? */];
-    answers.extend(elevate.map(|yes| if yes { A::Yes } else { A::No }));
-    let mut ui = Script::new(answers);
+    rig.current_exe = Some(rig.root.join("running").join("claude-consult-new-build"));
+    let mut ui = Script::new(vec![
+        A::Yes, /* the env key */
+        A::Yes, /* Proceed? */
+    ]);
     let opts = InstallOptions {
         panel: Some(vec!["deepseek-v4-pro,glm-5.2".into()]),
+        no_elevate,
         ..rig.opts()
     };
     let res = install_with(&opts, &mut ui, &rig.system()).expect("installed");
+    assert_eq!(ui.questions.len(), 2, "{:?}", ui.questions);
     (rig, res, ui)
 }
 
-const ELEVATE_Q: &str = "Register the task with administrator rights so it starts at boot?";
+const NOTICE: &str =
+    "       Start-at-boot needs administrator rights; accept the Windows prompt that appears.";
 
 #[test]
-fn a_refused_s4u_offers_the_administrator_prompt_and_takes_its_result() {
-    let (rig, res, ui) = logon_only_interactive(Uac::Accepted, Some(true));
+fn a_refused_s4u_goes_to_the_administrator_prompt_and_takes_its_result() {
+    let (rig, res, ui) = logon_only_interactive(Uac::Accepted, false);
     let InstallOutcome::Installed(done) = res else {
         panic!("{}", ui.text());
     };
-    assert_eq!(ui.questions.last().map(String::as_str), Some(ELEVATE_Q));
     assert_eq!(
         done.service,
         ServiceOutcome::Started {
@@ -974,21 +979,18 @@ fn a_refused_s4u_offers_the_administrator_prompt_and_takes_its_result() {
     );
     let inst = rig.install.display().to_string();
     let bin = done.binary.display().to_string();
+    // The task runs the copy in bin/; the elevated run is the running binary.
+    let running = rig.current_exe.as_ref().expect("exe").display().to_string();
     assert_eq!(
         rig.service_log()[1..],
         [
             format!("install {bin} {inst} 8766 127.0.0.1"),
-            format!("install_elevated {bin} {inst} 8766"),
+            format!("install_elevated {running} {inst} 8766"),
             "start 8766".to_string(),
         ]
     );
     let text = ui.text();
-    assert!(
-        text.contains(
-            "  [!!] Start-at-boot was refused: ERROR: Access is denied. Registering it needs administrator rights."
-        ),
-        "{text}"
-    );
+    assert!(text.contains(NOTICE), "{text}");
     assert!(
         text.contains(
             r"  [ok] Registered 'OpenRouterMCP' as HOST\me (S4U) - starts at boot and at logon"
@@ -999,12 +1001,12 @@ fn a_refused_s4u_offers_the_administrator_prompt_and_takes_its_result() {
 }
 
 #[test]
-fn declining_the_administrator_prompt_keeps_the_logon_only_task() {
-    let (rig, res, ui) = logon_only_interactive(Uac::Accepted, Some(false));
+fn no_elevate_keeps_the_logon_only_task() {
+    let (rig, res, ui) = logon_only_interactive(Uac::Accepted, true);
     let InstallOutcome::Installed(done) = res else {
         panic!("{}", ui.text());
     };
-    assert_eq!(ui.questions.last().map(String::as_str), Some(ELEVATE_Q));
+    assert!(!ui.text().contains(NOTICE));
     assert!(matches!(
         done.service,
         ServiceOutcome::Started {
@@ -1034,7 +1036,7 @@ fn a_cancelled_or_failed_administrator_prompt_keeps_the_logon_only_task() {
             "  [!!] Registering with administrator rights failed: the elevated registration failed: the elevated 'service install' exited with code 1",
         ),
     ] {
-        let (rig, res, ui) = logon_only_interactive(uac, Some(true));
+        let (rig, res, ui) = logon_only_interactive(uac, false);
         let InstallOutcome::Installed(done) = res else {
             panic!("{}", ui.text());
         };
@@ -1074,7 +1076,7 @@ fn an_elevated_installer_is_never_offered_the_prompt() {
     };
     let res = install_with(&opts, &mut ui, &rig.system()).expect("installed");
     assert!(matches!(res, InstallOutcome::Installed(_)), "{}", ui.text());
-    assert!(!ui.questions.iter().any(|q| q == ELEVATE_Q));
+    assert!(!ui.text().contains(NOTICE));
     assert!(
         !rig.service_log()
             .iter()

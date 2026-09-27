@@ -19,8 +19,8 @@ use consult_install::{
     uninstall_with,
 };
 use consult_service::{
-    DEFAULT_HOST, DEFAULT_PORT, ELEVATE_QUESTION, Registration, ServiceError, ServiceSpec,
-    ServiceStatus, Task, elevated_success, explain_interactive_fallback,
+    DEFAULT_HOST, DEFAULT_PORT, Registration, ServiceError, ServiceSpec, ServiceStatus, Task,
+    elevated_success, explain_interactive_fallback,
 };
 use consult_tui::StepKind;
 use indexmap::IndexMap;
@@ -204,6 +204,9 @@ impl Backend for RealBackend {
             // The key screen checks a new key itself, before this runs.
             skip_key_check: true,
             skip_service: false,
+            // A panel or key change must not raise an administrator prompt nobody
+            // asked for; the service screen's Re-register is where that happens.
+            no_elevate: true,
             skip_mcp_registration: false,
             progress_style: request.progress,
             summary_style: request.summary,
@@ -273,8 +276,11 @@ impl Backend for RealBackend {
                     account: None,
                 };
                 if action == ServiceAction::RegisterElevated {
-                    log(StepKind::Info, "Waiting for the administrator prompt ...");
-                    match consult_service::install_elevated(&spec, &spec.exe) {
+                    log(StepKind::Info, consult_service::ELEVATE_NOTICE);
+                    // The running binary, never the copy in bin/: an older copy would
+                    // not know the flags the elevated run is given.
+                    let exe = std::env::current_exe().unwrap_or_else(|_| spec.exe.clone());
+                    match consult_service::install_elevated(&spec, &exe) {
                         Ok(()) => match consult_service::registered() {
                             Some(task) if task.is_s4u() => {
                                 let account = task
@@ -393,11 +399,6 @@ pub fn answer(question: &str, rotating_key: bool, allow_unusual_key: bool) -> bo
         // Never reached with skip_key_check; checking was the key screen's business.
         return true;
     }
-    if question == ELEVATE_QUESTION {
-        // A panel or key change must not raise an administrator prompt nobody asked
-        // for; the service screen's Re-register is where that is offered.
-        return false;
-    }
     // "Proceed?", "Continue?", "Continue anyway?" (the install already runs this way),
     // "Keep this panel anyway?" (the picker showed the same-lab warning).
     true
@@ -498,8 +499,6 @@ mod tests {
         assert!(answer("Use it anyway?", true, true));
         assert!(answer("Proceed?", true, false));
         assert!(answer("Keep this panel anyway?", false, false));
-        assert!(!answer(ELEVATE_QUESTION, false, false));
-        assert!(!answer(ELEVATE_QUESTION, true, true));
     }
 
     #[test]

@@ -91,6 +91,10 @@ struct InstallArgs {
     /// Leave the scheduled task alone.
     #[arg(long)]
     skip_service: bool,
+    /// When start-at-boot needs administrator rights, keep the logon-only task
+    /// instead of bringing up the Windows administrator prompt.
+    #[arg(long)]
+    no_elevate: bool,
     /// Do not run `claude mcp add`.
     #[arg(long)]
     skip_mcp_registration: bool,
@@ -180,11 +184,12 @@ struct ServiceArgs {
     /// The port [default: the registered task's port, else 8765].
     #[arg(long)]
     port: Option<u16>,
-    /// install: when start-at-boot is refused for want of administrator rights, ask
-    /// for them through the Windows prompt without asking here first.
+    /// install: when start-at-boot is refused for want of administrator rights, go to
+    /// the Windows administrator prompt even without a terminal (interactive runs do
+    /// so anyway).
     #[arg(long, conflicts_with = "no_elevate")]
     elevate: bool,
-    /// install: never offer the administrator prompt; keep the logon-only task.
+    /// install: never bring up the administrator prompt; keep the logon-only task.
     #[arg(long)]
     no_elevate: bool,
     /// install: register for start-at-boot (S4U) or fail; never fall back to the
@@ -394,6 +399,7 @@ fn install(a: InstallArgs, install_dir: Option<PathBuf>, claude_dir: Option<Path
         port: a.port,
         skip_key_check: a.skip_key_check,
         skip_service: a.skip_service,
+        no_elevate: a.no_elevate,
         skip_mcp_registration: a.skip_mcp_registration,
         progress_style: a.progress_style.map(|p| p.0),
         summary_style: a.summary_style.map(|s| s.0),
@@ -511,14 +517,10 @@ fn service(
         .unwrap_or(DEFAULT_PORT);
     match a.action {
         ServiceAction::Install => {
-            let elevation = if a.elevate {
-                Elevation::Force
-            } else if a.no_elevate || !is_interactive() {
-                Elevation::Never
-            } else {
-                Elevation::Ask
-            };
-            service_install(&dir, port, a.no_fallback, elevation, a.run_as)
+            // Interactive runs go to the administrator prompt by themselves; --elevate
+            // does so without a terminal too, --no-elevate never.
+            let may_elevate = a.elevate || (!a.no_elevate && is_interactive());
+            service_install(&dir, port, a.no_fallback, may_elevate, a.run_as)
         }
         ServiceAction::Start => {
             service_start(port)?;
@@ -549,18 +551,6 @@ fn service(
     }
 }
 
-/// Whether `service install` may go through the administrator prompt when start-at-boot
-/// is refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Elevation {
-    /// `--elevate`: without asking.
-    Force,
-    /// Interactive: ask first, default yes.
-    Ask,
-    /// `--no-elevate`, or no terminal to ask on.
-    Never,
-}
-
 fn is_interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
@@ -570,7 +560,7 @@ fn service_install(
     dir: &Path,
     port: u16,
     no_fallback: bool,
-    elevation: Elevation,
+    may_elevate: bool,
     run_as: Option<String>,
 ) -> anyhow::Result<i32> {
     let spec = ServiceSpec {
@@ -606,20 +596,15 @@ fn service_install(
         );
     };
     // Already elevated and still refused: another prompt would change nothing.
-    let elevate = match elevation {
-        _ if consult_service::is_elevated() => false,
-        Elevation::Never => false,
-        Elevation::Force => true,
-        Elevation::Ask => {
-            println!("Start-at-boot was refused: {}", reason.trim());
-            consult_tui::plain::confirm(consult_service::ELEVATE_QUESTION, true)?
-        }
-    };
-    if !elevate {
+    if !may_elevate || consult_service::is_elevated() {
         explain();
         return Ok(0);
     }
-    match consult_service::install_elevated(&spec, &spec.exe) {
+    // The running binary, never the copy in bin/: that may be an older build that does
+    // not know the flags the elevated run is given. The task still runs the copy.
+    let exe = std::env::current_exe().context("cannot tell which binary is running")?;
+    println!("{}", consult_service::ELEVATE_NOTICE);
+    match consult_service::install_elevated(&spec, &exe) {
         Ok(()) => {}
         Err(consult_service::ServiceError::ElevationCancelled) => {
             println!("The administrator prompt was cancelled; keeping the logon-only task.");
@@ -803,26 +788,89 @@ mod tests {
         ));
     }
 
+    /// Splits a command line the way `CommandLineToArgvW` (and Rust's runtime on
+    /// Windows) does for arguments after the program name: whitespace separates
+    /// unless quoted, `2n` backslashes before a quote are `n` backslashes and the
+    /// quote toggles, `2n+1` are `n` and a literal quote, other backslashes are
+    /// literal.
+    fn split_windows(line: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut cur = String::new();
+        let mut in_arg = false;
+        let mut quoted = false;
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    let mut n = 1;
+                    while chars.peek() == Some(&'\\') {
+                        chars.next();
+                        n += 1;
+                    }
+                    in_arg = true;
+                    if chars.peek() == Some(&'"') {
+                        cur.extend(std::iter::repeat_n('\\', n / 2));
+                        if n % 2 == 1 {
+                            chars.next();
+                            cur.push('"');
+                        }
+                    } else {
+                        cur.extend(std::iter::repeat_n('\\', n));
+                    }
+                }
+                '"' => {
+                    in_arg = true;
+                    quoted = !quoted;
+                }
+                ' ' | '\t' if !quoted => {
+                    if in_arg {
+                        args.push(std::mem::take(&mut cur));
+                        in_arg = false;
+                    }
+                }
+                _ => {
+                    in_arg = true;
+                    cur.push(c);
+                }
+            }
+        }
+        if in_arg {
+            args.push(cur);
+        }
+        args
+    }
+
+    /// The launcher (consult_service::elevated_arguments) and this parser must agree,
+    /// or the elevated run exits 2 behind a hidden console and nobody sees why.
     #[test]
     fn the_elevated_childs_arguments_parse() {
+        let dir = r"C:\Users\A B\AppData\Local\claude-consult\";
         let spec = ServiceSpec {
             exe: PathBuf::from("x"),
-            working_dir: PathBuf::from(r"C:\x\cc"),
+            working_dir: PathBuf::from(dir),
             port: 9001,
             host: consult_service::DEFAULT_HOST.into(),
-            account: Some(r"EXAMPLE\caller".into()),
+            account: Some(r"EXAMPLE\some caller".into()),
         };
-        let args = consult_service::elevated_arguments(&spec);
-        let argv = std::iter::once("claude-consult").chain(args.split_whitespace());
-        let cli = Cli::try_parse_from(argv).expect("parses");
-        assert_eq!(cli.install_dir.as_deref(), Some(Path::new(r"C:\x\cc")));
+        let line = consult_service::elevated_arguments(&spec);
+        let argv = std::iter::once("claude-consult".to_string()).chain(split_windows(&line));
+        let cli = Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{line}\n{e}"));
+        assert_eq!(cli.install_dir.as_deref(), Some(Path::new(dir)));
         let Command::Service(s) = cli.command else {
-            panic!("not service");
+            panic!("not service: {line}");
         };
         assert_eq!(s.action, ServiceAction::Install);
         assert_eq!(s.port, Some(9001));
         assert!(s.no_fallback && s.no_elevate && !s.elevate);
-        assert_eq!(s.run_as.as_deref(), Some(r"EXAMPLE\caller"));
+        assert_eq!(s.run_as.as_deref(), Some(r"EXAMPLE\some caller"));
+    }
+
+    #[test]
+    fn the_windows_splitter_follows_the_rules() {
+        assert_eq!(
+            split_windows(r#"a "b c" d\e "f\\" "g\"h" """#),
+            ["a", "b c", r"d\e", r"f\", r#"g"h"#, ""]
+        );
     }
 
     #[test]

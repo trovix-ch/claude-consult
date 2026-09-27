@@ -204,11 +204,12 @@ such a Claude dir warns first, since the service would not find the key there.
 
 **Start at boot** (Windows) needs the task registered with the S4U logon type, which
 only an **elevated** process may do. Run from an admin shell, the installer registers it
-directly. Run unelevated, it first registers a task that starts at logon only, then asks
-`Register the task with administrator rights so it starts at boot? [Y/n]`; yes brings up
-the Windows administrator prompt, and a hidden elevated copy of the installed binary
-re-registers the task for boot. A no, a dismissed prompt, or `--unattended` keeps the
-logon-only task, and the installer says so and prints the command that fixes it later:
+directly. Run unelevated, it first registers a task that starts at logon only, prints
+`Start-at-boot needs administrator rights; accept the Windows prompt that appears.` and
+brings up the Windows administrator prompt; a hidden elevated run of the installer binary
+then re-registers the task for boot, as you. A dismissed prompt, `--no-elevate` or
+`--unattended` keeps the logon-only task, and the installer says so and prints the
+command that fixes it later:
 `& '<install dir>\bin\claude-consult.exe' service install --elevate`.
 
 ### Upgrading
@@ -662,11 +663,11 @@ claude-consult service stop | start | install | uninstall
 there is no service; `service status` says so and reports whether the port is listening.
 
 `service install` tries start-at-boot (S4U) first. Refused for want of administrator
-rights, it registers the logon-only task and, in a terminal, offers the administrator
-prompt as the installer does. `--elevate` goes to the prompt without asking,
-`--no-elevate` never offers it, and `--no-fallback` (what the elevated copy runs) fails
-instead of registering the logon-only task. The manage TUI's *Re-register task* asks the
-same question after its confirmation.
+rights, it registers the logon-only task and, in a terminal, goes straight to the
+administrator prompt as the installer does. `--elevate` does so without a terminal too,
+`--no-elevate` never does, and `--no-fallback` (what the elevated run is given) fails
+instead of registering the logon-only task. The manage TUI's *Re-register task* goes to
+the prompt after its one confirmation.
 
 **No console, a log file instead.** The task passes `--detached`: the server gives up the
 console Task Scheduler opened for it, so no window stays on screen (one may flash for an

@@ -66,6 +66,9 @@ pub struct InstallOptions {
     pub skip_key_check: bool,
     /// Leave the scheduled task alone.
     pub skip_service: bool,
+    /// When start-at-boot is refused for want of administrator rights, keep the
+    /// logon-only task instead of going to the administrator prompt.
+    pub no_elevate: bool,
     /// Do not run `claude mcp add`.
     pub skip_mcp_registration: bool,
     /// A progress style to set; `None` keeps the installed one.
@@ -88,6 +91,7 @@ impl Default for InstallOptions {
             port: DEFAULT_PORT,
             skip_key_check: false,
             skip_service: false,
+            no_elevate: false,
             skip_mcp_registration: false,
             progress_style: None,
             summary_style: None,

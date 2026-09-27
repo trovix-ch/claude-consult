@@ -172,7 +172,7 @@ pub enum ServiceAction {
     /// Register (or replace) the task for this install, then start it.
     Register,
     /// [`ServiceAction::Register`] through the administrator prompt, so the task starts
-    /// at boot. Not a menu entry: a yes to the question after Register leads here.
+    /// at boot. Not a menu entry: Register becomes this when the process is not elevated.
     RegisterElevated,
     /// Stop and delete the task.
     Unregister,
@@ -208,7 +208,7 @@ impl ServiceAction {
             Self::Restart => "stop, then start: sessions reach the current binary",
             Self::Register => "register the task again for this install, then start it",
             Self::RegisterElevated => {
-                "register it with administrator rights so it starts at boot, then start it"
+                "register it for this install with administrator rights (Windows will ask) so it starts at boot, then start it"
             }
             Self::Unregister => "stop and delete the task (Claude Code loses the server)",
         }

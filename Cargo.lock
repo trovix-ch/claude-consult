@@ -357,7 +357,6 @@ dependencies = [
  "consult-manage",
  "consult-mcp",
  "consult-service",
- "consult-tui",
  "serde_json",
  "tempfile",
  "tokio",

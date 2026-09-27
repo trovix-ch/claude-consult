@@ -467,38 +467,31 @@ fn service_actions_need_a_yes() {
 }
 
 #[test]
-fn reregister_offers_the_administrator_prompt_when_not_elevated() {
+fn reregister_goes_to_the_administrator_prompt_after_one_confirmation() {
     let open_register = || [Key::Char('7'), Key::Down, Key::Down, Key::Down, Key::Enter];
 
-    // Not elevated: after the yes, a second question, default yes.
+    // Not elevated: the one confirmation says Windows will ask, then it runs elevated.
     let (_t, fake, mut app) = setup(|f| f.needs_elevation = true);
     keys(&mut app, open_register());
     let q = app.ask().expect("confirm").confirm.question().to_string();
-    assert!(q.starts_with("Re-register task:"), "{q}");
+    assert!(q.starts_with("Re-register task (administrator):"), "{q}");
+    assert!(q.contains("Windows will ask"), "{q}");
     keys(&mut app, [Key::Char('y')]);
-    let q = app.ask().expect("elevate").confirm.question().to_string();
-    assert!(
-        q.starts_with("Register the task with administrator rights so it starts at boot?"),
-        "{q}"
-    );
-    keys(&mut app, [Key::Enter]);
+    assert!(app.ask().is_none(), "no second question");
     app.settle();
     assert_eq!(
         *fake.services.lock().expect("lock"),
         [ServiceAction::RegisterElevated]
     );
 
-    // A no there keeps the plain registration.
+    // A no does nothing.
     let (_t, fake, mut app) = setup(|f| f.needs_elevation = true);
     keys(&mut app, open_register());
-    keys(&mut app, [Key::Char('y'), Key::Char('n')]);
+    keys(&mut app, [Key::Char('n')]);
     app.settle();
-    assert_eq!(
-        *fake.services.lock().expect("lock"),
-        [ServiceAction::Register]
-    );
+    assert!(fake.services.lock().expect("lock").is_empty());
 
-    // Already elevated: no second question.
+    // Already elevated: the plain registration.
     let (_t, fake, mut app) = setup(|_| {});
     keys(&mut app, open_register());
     keys(&mut app, [Key::Char('y')]);

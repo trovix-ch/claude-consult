@@ -178,8 +178,6 @@ enum Then {
     Display(Display),
     DeleteSession(String),
     Service(ServiceAction),
-    /// Re-register was confirmed; yes goes through the administrator prompt.
-    ServiceElevate,
     UninstallFirst,
     UninstallSecond,
     UninstallKey,
@@ -941,7 +939,12 @@ impl App {
         if !self.backend.service_supported() {
             return;
         }
-        let action = ServiceAction::ALL[self.service.cursor.min(ServiceAction::ALL.len() - 1)];
+        let mut action = ServiceAction::ALL[self.service.cursor.min(ServiceAction::ALL.len() - 1)];
+        // Re-registering is already an explicit action: when start-at-boot needs the
+        // administrator prompt, this one confirmation leads straight to it.
+        if action == ServiceAction::Register && self.backend.needs_elevation() {
+            action = ServiceAction::RegisterElevated;
+        }
         let mut question = format!("{}: {}?", action.label(), action.describe());
         if let Some(crate::actions::TransportState::OtherInstall { dir, .. }) =
             self.status.as_ref().map(|s| &s.transport)
@@ -1030,23 +1033,6 @@ impl App {
                 self.load_sessions();
             }
             (Then::DeleteSession(_), false) => self.say(StepKind::Info, "Nothing deleted."),
-            (Then::Service(ServiceAction::Register), true) if self.backend.needs_elevation() => {
-                self.open(
-                    Confirm::new(
-                        format!(
-                            "{} Windows will ask for permission; no keeps a logon-only task.",
-                            consult_service::ELEVATE_QUESTION
-                        ),
-                        true,
-                    ),
-                    Then::ServiceElevate,
-                );
-            }
-            (Then::ServiceElevate, yes) => self.run_service(if yes {
-                ServiceAction::RegisterElevated
-            } else {
-                ServiceAction::Register
-            }),
             (Then::Service(action), true) => self.run_service(action),
             (Then::Service(_), false) => self.say(StepKind::Info, "Nothing done."),
             (Then::UninstallFirst, true) => self.open(

@@ -21,7 +21,6 @@ consult-install = { path = "../consult-install" }
 consult-manage = { path = "../consult-manage" }
 consult-mcp = { path = "../consult-mcp" }
 consult-service = { path = "../consult-service" }
-consult-tui = { path = "../consult-tui" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

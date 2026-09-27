@@ -424,9 +424,9 @@ pub fn elevated_success(account: &str) -> String {
     format!("Registered '{TASK_NAME}' as {account} (S4U) - starts at boot and at logon")
 }
 
-/// The question asked before the administrator prompt.
-pub const ELEVATE_QUESTION: &str =
-    "Register the task with administrator rights so it starts at boot?";
+/// The line shown just before the administrator prompt comes up.
+pub const ELEVATE_NOTICE: &str =
+    "Start-at-boot needs administrator rights; accept the Windows prompt that appears.";
 
 #[cfg(test)]
 mod tests;

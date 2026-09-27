@@ -20,7 +20,7 @@ use consult_core::settings::{
     HookKind, StatusLineMode, StatusLineOutcome, hook_command, ours_test,
 };
 use consult_service::{
-    DEFAULT_HOST, ELEVATE_QUESTION, Registration, ServiceError, ServiceSpec, TASK_NAME,
+    DEFAULT_HOST, ELEVATE_NOTICE, Registration, ServiceError, ServiceSpec, TASK_NAME,
     elevated_success, explain_interactive_fallback,
 };
 use consult_tui::picker::format_price;
@@ -824,7 +824,7 @@ fn start_service(
             Registration::S4U
         }
         Registration::InteractiveLogonOnly { reason } => {
-            offer_elevation(cx, &spec, binary, install_dir, reason)?
+            elevate(cx, opts, &spec, install_dir, reason)
         }
     };
     cx.ui.busy("Starting the service");
@@ -851,49 +851,48 @@ fn start_service(
     })
 }
 
-/// After S4U was refused and the logon-only task registered instead: offers the
-/// administrator prompt, which registers S4U from an elevated copy of the binary.
+/// After S4U was refused and the logon-only task registered instead: goes straight to
+/// the administrator prompt, which registers S4U from an elevated copy of the running
+/// binary.
 ///
-/// Not offered unattended (nobody to click it), nor when this process is already
-/// elevated (the prompt would be refused the same way). A no, a dismissed prompt or a
-/// failed elevated run keeps the logon-only task and explains it as before.
-fn offer_elevation(
+/// The running binary, not the copy in `bin/`: it is the build that knows the flags it
+/// is about to pass. Skipped unattended (nobody to click it), with `no_elevate`, and
+/// when this process is already elevated (the prompt would be refused the same way). A
+/// dismissed prompt or a failed elevated run keeps the logon-only task and explains it
+/// as before.
+fn elevate(
     cx: &mut Ctx<'_>,
+    opts: &InstallOptions,
     spec: &ServiceSpec,
-    binary: &Path,
     install_dir: &Path,
     reason: String,
-) -> Result<Registration, Halt> {
+) -> Registration {
     let explanation = explain_interactive_fallback(&reason, install_dir);
-    let logon_only = Registration::InteractiveLogonOnly {
-        reason: reason.clone(),
+    let logon_only = Registration::InteractiveLogonOnly { reason };
+    if cx.unattended || opts.no_elevate || cx.sys.service.is_elevated() {
+        cx.note(&explanation);
+        return logon_only;
+    }
+    let Some(exe) = cx.sys.host.current_exe() else {
+        cx.note("Cannot tell which binary is running, so it cannot be run elevated.");
+        cx.note(&explanation);
+        return logon_only;
     };
-    if cx.unattended || cx.sys.service.is_elevated() {
-        cx.note(&explanation);
-        return Ok(logon_only);
-    }
-    cx.note(&format!(
-        "Start-at-boot was refused: {}. Registering it needs administrator rights.",
-        reason.trim().trim_end_matches('.')
-    ));
-    if !cx.confirm(ELEVATE_QUESTION, true)? {
-        cx.note(&explanation);
-        return Ok(logon_only);
-    }
+    cx.info(ELEVATE_NOTICE);
     cx.ui.busy("Waiting for the administrator prompt");
-    match cx.sys.service.install_elevated(spec, binary) {
+    match cx.sys.service.install_elevated(spec, &exe) {
         Ok(()) => {}
         Err(ServiceError::ElevationCancelled) => {
             cx.note("The administrator prompt was cancelled; keeping the logon-only task.");
             cx.note(&explanation);
-            return Ok(logon_only);
+            return logon_only;
         }
         Err(e) => {
             cx.note(&format!(
                 "Registering with administrator rights failed: {e}"
             ));
             cx.note(&explanation);
-            return Ok(logon_only);
+            return logon_only;
         }
     }
     // What counts is what is registered now, not what the elevated run said.
@@ -904,11 +903,11 @@ fn offer_elevation(
                 .or_else(|| consult_service::current_account().ok())
                 .unwrap_or_else(|| "you".to_string());
             cx.ok(&elevated_success(&account));
-            Ok(Registration::S4U)
+            Registration::S4U
         }
         _ => {
             cx.note(&explanation);
-            Ok(logon_only)
+            logon_only
         }
     }
 }
